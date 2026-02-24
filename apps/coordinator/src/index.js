@@ -101,15 +101,24 @@ function pruneExpiredLeases() {
   if (changed) persist();
 }
 
-function requireLease(req, reply) {
+async function requireLease(req, reply) {
   pruneExpiredLeases();
   const auth = req.headers['authorization'] || '';
   const m = auth.match(/^Bearer\s+(.+)$/i);
   const token = m?.[1];
-  if (!token) return reply.code(401).send({ error: 'missing_lease' });
+  if (!token) {
+    reply.code(401).send({ error: 'missing_lease' });
+    return;
+  }
   const lease = leases.get(token);
-  if (!lease) return reply.code(403).send({ error: 'invalid_lease' });
-  if (lease.expMs < nowMs()) return reply.code(403).send({ error: 'expired_lease' });
+  if (!lease) {
+    reply.code(403).send({ error: 'invalid_lease' });
+    return;
+  }
+  if (lease.expMs < nowMs()) {
+    reply.code(403).send({ error: 'expired_lease' });
+    return;
+  }
   req.lease = lease;
 }
 
@@ -220,9 +229,9 @@ app.post('/v1/agent/renew', async (req, reply) => {
   return { ok: true, expiresInSeconds: LEASE_TTL_SECONDS };
 });
 
-app.get('/v1/challenge', { preHandler: requireLease }, async () => {
+app.get('/v1/challenge', { preHandler: requireLease }, async (req, reply) => {
   const e = getEpochInfo();
-  return {
+  const body = {
     epochId: e.epochId,
     challengeId: randToken(),
     creditsPerSolve: 1,
@@ -231,6 +240,7 @@ app.get('/v1/challenge', { preHandler: requireLease }, async () => {
     constraints: ['TODO'],
     difficulty: e.difficulty
   };
+  reply.send(body);
 });
 
 app.post('/v1/submit', { preHandler: requireLease }, async () => {
