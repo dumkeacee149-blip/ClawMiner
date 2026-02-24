@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import "forge-std/Script.sol";
+import "forge-std/console2.sol";
 import "../src/Mining.sol";
 
 contract Deploy is Script {
@@ -13,6 +14,6 @@ contract Deploy is Script {
         vm.stopBroadcast();
         console2.log("Mining deployed:", address(m));
         console2.log("Coordinator signer:", signer);
-        console2.log("Domain separator:", m.domainSeparator());
+        console2.logBytes32(m.domainSeparator());
     }
 }
