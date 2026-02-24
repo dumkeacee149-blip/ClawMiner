@@ -1,7 +1,8 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import crypto from 'node:crypto';
-import { recoverMessageAddress, privateKeyToAccount } from 'viem';
+import { recoverMessageAddress } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
 import { loadState, saveState } from './state.js';
 import { makeChallenge, verifyArtifact } from './challenge.js';
 
