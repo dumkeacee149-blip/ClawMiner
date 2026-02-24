@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import crypto from 'node:crypto';
 import { recoverMessageAddress } from 'viem';
 import { loadState, saveState } from './state.js';
+import { makeChallenge, verifyArtifact } from './challenge.js';
 
 const app = Fastify({ logger: true });
 
@@ -249,20 +250,42 @@ app.post('/v1/agent/renew', async (req, reply) => {
 
 app.get('/v1/challenge', { preHandler: requireLease }, async (req, reply) => {
   const e = getEpochInfo();
-  const body = {
+  const nonce = (req.query && req.query.nonce) ? String(req.query.nonce) : '';
+  if (!nonce || nonce.length > 80) {
+    reply.code(400).send({ error: 'missing_or_invalid_nonce' });
+    return;
+  }
+  const miner = req.lease.miner;
+  const ch = makeChallenge({ epochId: e.epochId, miner, nonce });
+  reply.send({
     epochId: e.epochId,
-    challengeId: randToken(),
+    miner,
+    nonce,
+    challengeId: `ch_${ch.seed.slice(0,16)}`,
     creditsPerSolve: 1,
-    doc: 'TODO: generate deterministic doc',
-    questions: ['TODO'],
-    constraints: ['TODO'],
+    doc: ch.doc,
+    questions: ch.questions,
+    constraints: ch.constraints,
     difficulty: e.difficulty
-  };
-  reply.send(body);
+  });
 });
 
-app.post('/v1/submit', { preHandler: requireLease }, async () => {
-  return { pass: false, reason: 'not_implemented' };
+app.post('/v1/submit', { preHandler: requireLease }, async (req, reply) => {
+  const e = getEpochInfo();
+  const miner = req.lease.miner;
+  const { nonce, artifact } = req.body || {};
+  const nstr = typeof nonce === 'string' ? nonce : '';
+  if (!nstr || nstr.length > 80) {
+    reply.code(400).send({ error: 'missing_or_invalid_nonce' });
+    return;
+  }
+  const ch = makeChallenge({ epochId: e.epochId, miner, nonce: nstr });
+  const v = verifyArtifact({ expectedArtifact: ch.expectedArtifact, artifact });
+  if (!v.pass) {
+    reply.send({ pass: false, ...v, epochId: e.epochId });
+    return;
+  }
+  reply.send({ pass: true, epochId: e.epochId, credits: 1, artifact: ch.expectedArtifact });
 });
 
 app.listen({ port: PORT, host: '0.0.0.0' }).catch((err) => {
