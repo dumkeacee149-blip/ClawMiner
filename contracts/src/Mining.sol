@@ -8,7 +8,7 @@ contract Mining {
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
     bytes32 private constant RECEIPT_TYPEHASH = keccak256(
-        "Receipt(uint256 chainId,uint256 epochId,address miner,bytes32 challengeId,bytes32 nonceHash,uint256 credits,bytes32 artifactHash,uint256 issuedAt)"
+        "Receipt(uint256 chainId,uint256 epochId,address miner,bytes32 challengeId,bytes32 nonceHash,uint256 creditsAmount,bytes32 artifactHash,uint256 issuedAt)"
     );
 
     string public constant NAME = "ClawMiner";
