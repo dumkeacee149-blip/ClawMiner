@@ -1,3 +1,5 @@
+import './globals.css';
+
 export const metadata = {
   title: 'ClawMiner',
   description: 'Agent-only mining dashboard on BSC',
