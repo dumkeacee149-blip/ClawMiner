@@ -14,6 +14,45 @@ function fmtDuration(sec: number) {
   return `${h}h ${m}m ${r}s`;
 }
 
+function utcMidnightMs(t = new Date()) {
+  return Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate(), 0, 0, 0, 0);
+}
+
+function parseGenesisUtc(genesisUtc: string) {
+  const [y, m, d] = genesisUtc.split('-').map((x) => parseInt(x, 10));
+  return Date.UTC(y, m - 1, d, 0, 0, 0, 0);
+}
+
+function localEpochModel(opts: {
+  genesisUtc: string;
+  cap: number;
+  halvingEpochs: number;
+  epochSeconds: number;
+  nowMs?: number;
+}) {
+  const nowMs = opts.nowMs ?? Date.now();
+  const g = parseGenesisUtc(opts.genesisUtc);
+  const day0 = utcMidnightMs(new Date(nowMs));
+  const epochId = Math.max(0, Math.floor((day0 - g) / (opts.epochSeconds * 1000)));
+  const epochStartTs = g + epochId * opts.epochSeconds * 1000;
+  const nextEpochStartTs = epochStartTs + opts.epochSeconds * 1000;
+  const nextEpochInSeconds = Math.max(0, Math.floor((nextEpochStartTs - nowMs) / 1000));
+  const era = Math.floor(epochId / opts.halvingEpochs);
+  const r0 = opts.cap / (2 * opts.halvingEpochs);
+  const epochMint = r0 / Math.pow(2, era);
+
+  return {
+    genesisUtc: opts.genesisUtc,
+    cap: opts.cap,
+    halvingEpochs: opts.halvingEpochs,
+    epochSeconds: opts.epochSeconds,
+    epochId,
+    era,
+    epochMint,
+    nextEpochInSeconds,
+  };
+}
+
 async function getJson(url: string) {
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -27,18 +66,27 @@ export default async function Page() {
   const token = process.env.NEXT_PUBLIC_TOKEN_ADDRESS ?? '';
   const mining = process.env.NEXT_PUBLIC_MINING_ADDRESS ?? '';
 
-  let epoch: any = null;
+  // Always compute baseline KPI locally (works on Vercel without coordinator).
+  const local = localEpochModel({
+    genesisUtc: '2026-02-24',
+    cap: 21_000_000,
+    halvingEpochs: 180,
+    epochSeconds: 86400,
+  });
+
+  // Optional: enrich with coordinator stats when you run locally.
   let stats: any = null;
   let loadErr: string | null = null;
 
-  if (coordinator) {
+  if (coordinator && !/example\.com/.test(coordinator)) {
     try {
-      epoch = await getJson(`${coordinator.replace(/\/$/, '')}/v1/epoch`);
       stats = await getJson(`${coordinator.replace(/\/$/, '')}/v1/stats`);
     } catch (e: any) {
       loadErr = e?.message || 'failed to load coordinator';
     }
   }
+
+  const epochMintDisplay = local.epochMint.toLocaleString(undefined, { maximumFractionDigits: 6 });
 
   return (
     <div className="container">
@@ -64,23 +112,23 @@ export default async function Page() {
           <div className="kpis">
             <div className="kpi">
               <div className="kpiLabel">Next Epoch In</div>
-              <div className="kpiValue">{epoch ? fmtDuration(epoch.nextEpochInSeconds) : '—'}</div>
+              <div className="kpiValue">{fmtDuration(local.nextEpochInSeconds)}</div>
               <div className="kpiHint">UTC 00:00 boundary</div>
             </div>
             <div className="kpi">
               <div className="kpiLabel">Active Agents</div>
               <div className="kpiValue">{stats ? stats.activeAgents : '—'}</div>
-              <div className="kpiHint">Active leases (coordinator)</div>
+              <div className="kpiHint">From coordinator (local only)</div>
             </div>
             <div className="kpi">
               <div className="kpiLabel">Current Epoch</div>
-              <div className="kpiValue">{epoch ? epoch.epochId : '—'}</div>
-              <div className="kpiHint">Genesis: {epoch?.genesisUtc || '—'}</div>
+              <div className="kpiValue">{local.epochId}</div>
+              <div className="kpiHint">Genesis: {local.genesisUtc}</div>
             </div>
             <div className="kpi">
               <div className="kpiLabel">Epoch Mint</div>
-              <div className="kpiValue">{epoch ? epoch.epochMintDisplay : '—'}</div>
-              <div className="kpiHint">Era: {epoch ? epoch.era : '—'} (halving/180)</div>
+              <div className="kpiValue">{epochMintDisplay}</div>
+              <div className="kpiHint">Era: {local.era} (halving/180)</div>
             </div>
           </div>
 
@@ -95,7 +143,7 @@ export default async function Page() {
 
           <div className="row">
             <div className="rowKey">Coordinator</div>
-            <div className="rowVal">{coordinator || 'not set'}</div>
+            <div className="rowVal">{coordinator || 'not set (recommended for public dashboard)'}</div>
           </div>
           <div className="row">
             <div className="rowKey">RPC</div>
