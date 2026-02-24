@@ -1,9 +1,27 @@
 import Fastify from 'fastify';
+import cors from '@fastify/cors';
 import crypto from 'node:crypto';
 import { recoverMessageAddress } from 'viem';
 import { loadState, saveState } from './state.js';
 
 const app = Fastify({ logger: true });
+
+// CORS for local dashboard dev (and optional public dashboard if needed)
+await app.register(cors, {
+  origin: (origin, cb) => {
+    // allow curl/no-origin
+    if (!origin) return cb(null, true);
+    const allowed = [
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:3001',
+    ];
+    if (allowed.includes(origin)) return cb(null, true);
+    return cb(new Error('Not allowed by CORS'), false);
+  },
+  credentials: false,
+});
 
 const PORT = Number(process.env.PORT || 8787);
 const CHAIN_ID = 56;

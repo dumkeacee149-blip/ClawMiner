@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "fastify": "^4.28.1",
-    "viem": "^2.37.5"
+    "viem": "^2.37.5",
+    "@fastify/cors": "^9.0.1"
   }
 }
