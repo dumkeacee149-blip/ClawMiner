@@ -6,6 +6,7 @@ import path from 'path';
 const COORD = process.env.CLAW_COORDINATOR_URL || 'http://127.0.0.1:8787';
 const HOME = process.env.HOME || process.cwd();
 const KEY_PATH = process.env.CLAW_AGENT_KEY_PATH || path.join(HOME, '.clawminer-agent-key.json');
+const STATE_PATH = process.env.CLAW_AGENT_STATE_PATH || path.join(HOME, '.clawminer-agent-state.json');
 
 async function jpost(url, body){
   const res = await fetch(url, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
@@ -19,7 +20,7 @@ async function jpost(url, body){
 }
 
 function usage(){
-  console.log(`\nclawminer (MVP)\n\nCommands:\n  register --miner 0x...\n  prove --miner 0x... --walletSig 0x...\n\nEnv:\n  CLAW_COORDINATOR_URL (default ${COORD})\n  CLAW_AGENT_KEY_PATH (default ${KEY_PATH})\n`);
+  console.log(`\nclawminer (MVP)\n\nCommands:\n  register --miner 0x...\n  prove --miner 0x... --walletSig 0x...\n\nEnv:\n  CLAW_COORDINATOR_URL (default ${COORD})\n  CLAW_AGENT_KEY_PATH (default ${KEY_PATH})\n  CLAW_AGENT_STATE_PATH (default ${STATE_PATH})\n`);
 }
 
 function arg(name){
@@ -55,11 +56,28 @@ function loadOrCreateKey(){
   };
 }
 
+function saveState(state){
+  fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), { mode: 0o600 });
+}
+
+function loadState(){
+  if(!fs.existsSync(STATE_PATH)) return null;
+  return JSON.parse(fs.readFileSync(STATE_PATH,'utf8'));
+}
+
 async function cmdRegister(){
   const miner = arg('--miner');
   if(!miner) throw new Error('missing --miner');
   const kp = loadOrCreateKey();
   const out = await jpost(`${COORD}/v1/agent/register`, { miner, agentPubKey: kp.publicKeySpkiDerB64 });
+
+  saveState({
+    miner,
+    serverNonce: out.serverNonce,
+    messageToSign: out.messageToSign,
+    createdAt: new Date().toISOString(),
+  });
+
   console.log('\n[REGISTER] ok');
   console.log('serverNonce:', out.serverNonce);
   console.log('\nMessage to sign in MetaMask/OKX (personal_sign):\n');
@@ -74,10 +92,16 @@ async function cmdProve(){
   if(!miner) throw new Error('missing --miner');
   if(!walletSig) throw new Error('missing --walletSig');
 
-  const kp = loadOrCreateKey();
-  const reg = await jpost(`${COORD}/v1/agent/register`, { miner, agentPubKey: kp.publicKeySpkiDerB64 });
+  const st = loadState();
+  if(!st || !st.serverNonce || !st.messageToSign){
+    throw new Error(`missing state at ${STATE_PATH}. Run: clawminer register --miner ${miner}`);
+  }
+  if((st.miner || '').toLowerCase() !== miner.toLowerCase()){
+    throw new Error(`state miner mismatch. State has ${st.miner}, args has ${miner}. Re-run register.`);
+  }
 
-  const msg = Buffer.from(reg.serverNonce, 'utf8');
+  const kp = loadOrCreateKey();
+  const msg = Buffer.from(st.serverNonce, 'utf8');
   const sig = crypto.sign(null, msg, kp.privateKey);
   const agentSigB64 = Buffer.from(sig).toString('base64');
 
