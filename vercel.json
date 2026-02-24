@@ -1,9 +1,0 @@
-{
-  "framework": "nextjs",
-  "projects": [
-    {
-      "name": "claw-miner",
-      "rootDirectory": "apps/dashboard"
-    }
-  ]
-}
