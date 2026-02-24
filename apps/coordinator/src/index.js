@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import crypto from 'node:crypto';
 import { recoverMessageAddress } from 'viem';
+import { loadState, saveState } from './state.js';
 
 const app = Fastify({ logger: true });
 
@@ -13,8 +14,8 @@ const R0 = CAP / (2 * HALVING_EPOCHS);
 const GENESIS_UTC = process.env.GENESIS_UTC || '2026-02-24';
 const LEASE_TTL_SECONDS = Number(process.env.LEASE_TTL_SECONDS || 86400);
 
-const registrations = new Map();
-const leases = new Map();
+// Persist to JSON file by default (MVP)
+const STATE_PATH = process.env.STATE_PATH || './state.local.json';
 
 function nowMs() { return Date.now(); }
 function randToken() { return crypto.randomUUID(); }
@@ -61,26 +62,6 @@ function getEpochInfo(atMs = nowMs()) {
   };
 }
 
-function requireLease(req, reply) {
-  const auth = req.headers['authorization'] || '';
-  const m = auth.match(/^Bearer\s+(.+)$/i);
-  const token = m?.[1];
-  if (!token) return reply.code(401).send({ error: 'missing_lease' });
-  const lease = leases.get(token);
-  if (!lease) return reply.code(403).send({ error: 'invalid_lease' });
-  if (lease.expMs < nowMs()) return reply.code(403).send({ error: 'expired_lease' });
-  req.lease = lease;
-}
-
-function countActiveAgents() {
-  const t = nowMs();
-  let n = 0;
-  for (const [, lease] of leases) {
-    if (lease.expMs >= t) n++;
-  }
-  return n;
-}
-
 function normalizeMiner(miner) {
   if (typeof miner !== 'string') return null;
   const m = miner.toLowerCase();
@@ -95,6 +76,51 @@ function buildProveMessage({ miner, serverNonce }) {
 function importEd25519SpkiDerB64(b64) {
   const der = Buffer.from(b64, 'base64');
   return crypto.createPublicKey({ key: der, format: 'der', type: 'spki' });
+}
+
+// --- load persisted state into in-memory objects ---
+const disk = loadState(STATE_PATH);
+const registrations = new Map(Object.entries(disk.registrations || {}));
+const leases = new Map(Object.entries(disk.leases || {}));
+
+function persist() {
+  const registrationsObj = Object.fromEntries(registrations);
+  const leasesObj = Object.fromEntries(leases);
+  saveState(STATE_PATH, { registrations: registrationsObj, leases: leasesObj });
+}
+
+function pruneExpiredLeases() {
+  const t = nowMs();
+  let changed = false;
+  for (const [token, lease] of leases) {
+    if (!lease || lease.expMs < t) {
+      leases.delete(token);
+      changed = true;
+    }
+  }
+  if (changed) persist();
+}
+
+function requireLease(req, reply) {
+  pruneExpiredLeases();
+  const auth = req.headers['authorization'] || '';
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  const token = m?.[1];
+  if (!token) return reply.code(401).send({ error: 'missing_lease' });
+  const lease = leases.get(token);
+  if (!lease) return reply.code(403).send({ error: 'invalid_lease' });
+  if (lease.expMs < nowMs()) return reply.code(403).send({ error: 'expired_lease' });
+  req.lease = lease;
+}
+
+function countActiveAgents() {
+  pruneExpiredLeases();
+  const t = nowMs();
+  let n = 0;
+  for (const [, lease] of leases) {
+    if (lease.expMs >= t) n++;
+  }
+  return n;
 }
 
 app.get('/healthz', async () => ({ ok: true }));
@@ -128,7 +154,6 @@ app.post('/v1/agent/register', async (req, reply) => {
     return reply.code(400).send({ error: 'missing_or_invalid_fields' });
   }
 
-  // Validate key parses
   try {
     importEd25519SpkiDerB64(agentPubKey);
   } catch {
@@ -137,6 +162,7 @@ app.post('/v1/agent/register', async (req, reply) => {
 
   const serverNonce = randToken();
   registrations.set(miner, { agentPubKeyB64: agentPubKey, serverNonce, registeredAtMs: nowMs() });
+  persist();
 
   return {
     miner,
@@ -146,8 +172,6 @@ app.post('/v1/agent/register', async (req, reply) => {
   };
 });
 
-// Prove: walletSig proves miner address control; agentSig proves possession of ed25519 agent key
-// agentSig is base64(signature) over UTF-8 bytes of serverNonce
 app.post('/v1/agent/prove', async (req, reply) => {
   const miner = normalizeMiner(req.body?.miner);
   const walletSig = req.body?.walletSig;
@@ -180,6 +204,7 @@ app.post('/v1/agent/prove', async (req, reply) => {
 
   const leaseToken = randToken();
   leases.set(leaseToken, { miner, expMs: nowMs() + LEASE_TTL_SECONDS * 1000 });
+  persist();
 
   return { leaseToken, expiresInSeconds: LEASE_TTL_SECONDS, miner };
 });
@@ -190,6 +215,8 @@ app.post('/v1/agent/renew', async (req, reply) => {
   const lease = leases.get(leaseToken);
   if (!lease) return reply.code(403).send({ error: 'invalid_lease' });
   lease.expMs = nowMs() + LEASE_TTL_SECONDS * 1000;
+  leases.set(leaseToken, lease);
+  persist();
   return { ok: true, expiresInSeconds: LEASE_TTL_SECONDS };
 });
 
