@@ -1,0 +1,14 @@
+{
+  "name": "@clawminer/miner-client",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "clawminer": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js"
+  },
+  "dependencies": {
+    "tweetnacl": "^1.0.3"
+  }
+}
