@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import crypto from 'node:crypto';
-import { recoverMessageAddress } from 'viem';
+import { recoverMessageAddress, privateKeyToAccount } from 'viem';
 import { loadState, saveState } from './state.js';
 import { makeChallenge, verifyArtifact } from './challenge.js';
 
@@ -25,13 +25,17 @@ await app.register(cors, {
 });
 
 const PORT = Number(process.env.PORT || 8787);
-const CHAIN_ID = 56;
+const CHAIN_ID = Number(process.env.CHAIN_ID || 56);
 const EPOCH_SECONDS = 86400;
 const HALVING_EPOCHS = 180;
 const CAP = 21_000_000;
 const R0 = CAP / (2 * HALVING_EPOCHS);
 const GENESIS_UTC = process.env.GENESIS_UTC || '2026-02-24';
 const LEASE_TTL_SECONDS = Number(process.env.LEASE_TTL_SECONDS || 86400);
+
+const COORDINATOR_SIGNER_PRIVATE_KEY = process.env.COORDINATOR_SIGNER_PRIVATE_KEY || '';
+const MINING_CONTRACT_ADDRESS = process.env.MINING_CONTRACT_ADDRESS || '';
+const signerAccount = COORDINATOR_SIGNER_PRIVATE_KEY ? privateKeyToAccount(COORDINATOR_SIGNER_PRIVATE_KEY) : null;
 
 // Persist to JSON file by default (MVP)
 const STATE_PATH = process.env.STATE_PATH || './state.local.json';
@@ -152,6 +156,12 @@ function countActiveAgents() {
 }
 
 app.get('/healthz', async () => ({ ok: true }));
+
+app.get('/v1/config', async () => ({
+  chainId: CHAIN_ID,
+  miningContract: MINING_CONTRACT_ADDRESS || null,
+  coordinatorSigner: signerAccount ? signerAccount.address : null
+}));
 
 app.get('/v1/epoch', async () => {
   const e = getEpochInfo();
@@ -292,7 +302,50 @@ app.post('/v1/submit', { preHandler: requireLease }, async (req, reply) => {
   }
 
   // Next step: produce receipt + signature for on-chain credits.
-  reply.send({ pass: true, epochId: e.epochId, credits: 1, artifact: ch.expectedArtifact });
+  if (!signerAccount) {
+    reply.code(500).send({ error: 'missing_signer' });
+    return;
+  }
+  if (!MINING_CONTRACT_ADDRESS) {
+    reply.code(500).send({ error: 'missing_mining_contract' });
+    return;
+  }
+
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const receipt = {
+    chainId: CHAIN_ID,
+    epochId: e.epochId,
+    miner,
+    challengeId: `ch_${ch.seed.slice(0, 16)}`,
+    nonceHash: `0x${crypto.createHash('sha256').update(nstr, 'utf8').digest('hex')}`,
+    creditsAmount: 1,
+    artifactHash: `0x${crypto.createHash('sha256').update(ch.expectedArtifact, 'utf8').digest('hex')}`,
+    issuedAt
+  };
+
+  const domain = {
+    name: 'ClawMiner',
+    version: '1',
+    chainId: CHAIN_ID,
+    verifyingContract: MINING_CONTRACT_ADDRESS,
+  };
+
+  const types = {
+    Receipt: [
+      { name: 'chainId', type: 'uint256' },
+      { name: 'epochId', type: 'uint256' },
+      { name: 'miner', type: 'address' },
+      { name: 'challengeId', type: 'bytes32' },
+      { name: 'nonceHash', type: 'bytes32' },
+      { name: 'creditsAmount', type: 'uint256' },
+      { name: 'artifactHash', type: 'bytes32' },
+      { name: 'issuedAt', type: 'uint256' },
+    ],
+  };
+
+  const signature = await signerAccount.signTypedData({ domain, types, primaryType: 'Receipt', message: receipt });
+
+  reply.send({ pass: true, epochId: e.epochId, credits: 1, artifact: ch.expectedArtifact, receipt, signature });
 });
 
 app.listen({ port: PORT, host: '0.0.0.0' }).catch((err) => {
