@@ -255,13 +255,15 @@ app.get('/v1/challenge', { preHandler: requireLease }, async (req, reply) => {
     reply.code(400).send({ error: 'missing_or_invalid_nonce' });
     return;
   }
+
   const miner = req.lease.miner;
   const ch = makeChallenge({ epochId: e.epochId, miner, nonce });
+
   reply.send({
     epochId: e.epochId,
     miner,
     nonce,
-    challengeId: `ch_${ch.seed.slice(0,16)}`,
+    challengeId: `ch_${ch.seed.slice(0, 16)}`,
     creditsPerSolve: 1,
     doc: ch.doc,
     questions: ch.questions,
@@ -274,17 +276,22 @@ app.post('/v1/submit', { preHandler: requireLease }, async (req, reply) => {
   const e = getEpochInfo();
   const miner = req.lease.miner;
   const { nonce, artifact } = req.body || {};
+
   const nstr = typeof nonce === 'string' ? nonce : '';
   if (!nstr || nstr.length > 80) {
     reply.code(400).send({ error: 'missing_or_invalid_nonce' });
     return;
   }
+
   const ch = makeChallenge({ epochId: e.epochId, miner, nonce: nstr });
   const v = verifyArtifact({ expectedArtifact: ch.expectedArtifact, artifact });
+
   if (!v.pass) {
-    reply.send({ pass: false, ...v, epochId: e.epochId });
+    reply.send({ pass: false, epochId: e.epochId, ...v });
     return;
   }
+
+  // Next step: produce receipt + signature for on-chain credits.
   reply.send({ pass: true, epochId: e.epochId, credits: 1, artifact: ch.expectedArtifact });
 });
 

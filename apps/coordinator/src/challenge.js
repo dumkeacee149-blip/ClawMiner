@@ -5,62 +5,61 @@ export function sha256Hex(s) {
 }
 
 export function makeChallenge({ epochId, miner, nonce }) {
-  // Deterministic seed from epoch+miner+nonce
   const seed = sha256Hex(`clawminer|${epochId}|${miner}|${nonce}`);
 
-  // Simple arithmetic puzzle derived from seed
-  const a = (parseInt(seed.slice(0, 8), 16) % 9000) + 1000;   // 1000..9999
-  const b = (parseInt(seed.slice(8, 16), 16) % 9000) + 1000;  // 1000..9999
-  const c = (parseInt(seed.slice(16, 24), 16) % 9000) + 1000; // 1000..9999
+  // 1000..9999 deterministic ints
+  const a = (parseInt(seed.slice(0, 8), 16) % 9000) + 1000;
+  const b = (parseInt(seed.slice(8, 16), 16) % 9000) + 1000;
+  const c = (parseInt(seed.slice(16, 24), 16) % 9000) + 1000;
   const mod = 97;
   const ans = (a * b + c) % mod;
 
+  const expectedArtifact = `CLAW-${epochId}-${ans}`;
+
   const doc = [
-    `Epoch ${epochId} / Agent-only work package`,
-    `You are given three integers derived from a deterministic seed:`,
+    `CLAWMINER work package (agent-only)`,
+    `epoch=${epochId}`,
+    `miner=${miner}`,
+    `nonce=${nonce}`,
+    '',
+    `Compute: (a*b + c) mod ${mod}`,
     `a=${a}`,
     `b=${b}`,
     `c=${c}`,
-    `Compute: (a*b + c) mod ${mod}.`,
-    `Return the artifact in the exact format:`,
-    `artifact: CLAW-${epochId}-${ans}`,
-    `No extra text. One line only.`,
+    '',
+    `Output EXACTLY one line:`,
+    expectedArtifact,
+    `No extra characters, no spaces, no punctuation.`,
   ].join('\n');
+
+  const questions = [
+    `Q1: What is (a*b + c) mod ${mod}?`,
+    `Q2: Return exactly: ${expectedArtifact}`,
+  ];
 
   const constraints = [
     'Artifact must be exactly one line',
-    `Artifact must start with: CLAW-${epochId}-`,
-    `Artifact must equal: CLAW-${epochId}-${ans}`,
+    `Artifact must equal: ${expectedArtifact}`,
   ];
 
   return {
     seed,
     a, b, c, mod,
     answer: ans,
+    expectedArtifact,
     doc,
-    questions: [
-      `What is (a*b + c) mod ${mod}?`,
-      `Return exactly: CLAW-${epochId}-<answer>`,
-    ],
+    questions,
     constraints,
-    expectedArtifact: `CLAW-${epochId}-${ans}`,
   };
 }
 
 export function verifyArtifact({ expectedArtifact, artifact }) {
-  if (typeof artifact !== 'string') {
-    return { pass: false, reason: 'artifact_missing' };
-  }
-  const trimmed = artifact.trimEnd();
-  // reject multi-line
-  if (trimmed.includes('\n') || trimmed.includes('\r')) {
-    return { pass: false, reason: 'artifact_multiline' };
-  }
-  if (trimmed.trim() != trimmed) {
-    // leading/trailing spaces not allowed
-    return { pass: false, reason: 'artifact_whitespace' };
-  }
-  if (trimmed !== expectedArtifact) {
+  if (typeof artifact !== 'string') return { pass: false, reason: 'artifact_missing' };
+
+  // strict: no whitespace, no extra lines
+  if (artifact.includes('\n') || artifact.includes('\r')) return { pass: false, reason: 'artifact_multiline' };
+  if (artifact.trim() !== artifact) return { pass: false, reason: 'artifact_whitespace' };
+  if (artifact !== expectedArtifact) {
     return { pass: false, reason: 'artifact_mismatch', expectedArtifact };
   }
   return { pass: true };
