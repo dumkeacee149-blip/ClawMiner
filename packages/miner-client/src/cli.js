@@ -1,14 +1,11 @@
 #!/usr/bin/env node
-import nacl from 'tweetnacl';
+import crypto from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
 
 const COORD = process.env.CLAW_COORDINATOR_URL || 'http://127.0.0.1:8787';
 const HOME = process.env.HOME || process.cwd();
 const KEY_PATH = process.env.CLAW_AGENT_KEY_PATH || path.join(HOME, '.clawminer-agent-key.json');
-
-function u8ToB64(u8){ return Buffer.from(u8).toString('base64'); }
-function b64ToU8(b64){ return new Uint8Array(Buffer.from(b64,'base64')); }
 
 async function jpost(url, body){
   const res = await fetch(url, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
@@ -21,23 +18,6 @@ async function jpost(url, body){
   return json;
 }
 
-function loadOrCreateKey(){
-  if(fs.existsSync(KEY_PATH)){
-    const j = JSON.parse(fs.readFileSync(KEY_PATH,'utf8'));
-    return {
-      publicKey: b64ToU8(j.publicKeyB64),
-      secretKey: b64ToU8(j.secretKeyB64)
-    };
-  }
-  const kp = nacl.sign.keyPair();
-  const j = {
-    publicKeyB64: u8ToB64(kp.publicKey),
-    secretKeyB64: u8ToB64(kp.secretKey)
-  };
-  fs.writeFileSync(KEY_PATH, JSON.stringify(j, null, 2), { mode: 0o600 });
-  return kp;
-}
-
 function usage(){
   console.log(`\nclawminer (MVP)\n\nCommands:\n  register --miner 0x...\n  prove --miner 0x... --walletSig 0x...\n\nEnv:\n  CLAW_COORDINATOR_URL (default ${COORD})\n  CLAW_AGENT_KEY_PATH (default ${KEY_PATH})\n`);
 }
@@ -48,12 +28,38 @@ function arg(name){
   return process.argv[i+1] || null;
 }
 
+function loadOrCreateKey(){
+  if(fs.existsSync(KEY_PATH)){
+    const j = JSON.parse(fs.readFileSync(KEY_PATH,'utf8'));
+    const privDer = Buffer.from(j.privateKeyPkcs8DerB64, 'base64');
+    const pubDer = Buffer.from(j.publicKeySpkiDerB64, 'base64');
+    return {
+      privateKey: crypto.createPrivateKey({ key: privDer, format: 'der', type: 'pkcs8' }),
+      publicKey: crypto.createPublicKey({ key: pubDer, format: 'der', type: 'spki' }),
+      publicKeySpkiDerB64: j.publicKeySpkiDerB64,
+    };
+  }
+
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  const pubDer = publicKey.export({ format: 'der', type: 'spki' });
+  const privDer = privateKey.export({ format: 'der', type: 'pkcs8' });
+  const j = {
+    publicKeySpkiDerB64: Buffer.from(pubDer).toString('base64'),
+    privateKeyPkcs8DerB64: Buffer.from(privDer).toString('base64'),
+  };
+  fs.writeFileSync(KEY_PATH, JSON.stringify(j, null, 2), { mode: 0o600 });
+  return {
+    privateKey,
+    publicKey,
+    publicKeySpkiDerB64: j.publicKeySpkiDerB64,
+  };
+}
+
 async function cmdRegister(){
   const miner = arg('--miner');
   if(!miner) throw new Error('missing --miner');
   const kp = loadOrCreateKey();
-  const agentPubKey = u8ToB64(kp.publicKey);
-  const out = await jpost(`${COORD}/v1/agent/register`, { miner, agentPubKey });
+  const out = await jpost(`${COORD}/v1/agent/register`, { miner, agentPubKey: kp.publicKeySpkiDerB64 });
   console.log('\n[REGISTER] ok');
   console.log('serverNonce:', out.serverNonce);
   console.log('\nMessage to sign in MetaMask/OKX (personal_sign):\n');
@@ -68,13 +74,12 @@ async function cmdProve(){
   if(!miner) throw new Error('missing --miner');
   if(!walletSig) throw new Error('missing --walletSig');
 
-  // Re-register to get a fresh nonce (simplest MVP flow)
   const kp = loadOrCreateKey();
-  const agentPubKey = u8ToB64(kp.publicKey);
-  const reg = await jpost(`${COORD}/v1/agent/register`, { miner, agentPubKey });
+  const reg = await jpost(`${COORD}/v1/agent/register`, { miner, agentPubKey: kp.publicKeySpkiDerB64 });
 
-  const agentSig = nacl.sign.detached(new TextEncoder().encode(reg.serverNonce), kp.secretKey);
-  const agentSigB64 = u8ToB64(agentSig);
+  const msg = Buffer.from(reg.serverNonce, 'utf8');
+  const sig = crypto.sign(null, msg, kp.privateKey);
+  const agentSigB64 = Buffer.from(sig).toString('base64');
 
   const out = await jpost(`${COORD}/v1/agent/prove`, { miner, walletSig, agentSig: agentSigB64 });
   console.log('\n[PROVE] ok');

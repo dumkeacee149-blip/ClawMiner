@@ -7,8 +7,5 @@
   },
   "scripts": {
     "start": "node src/cli.js"
-  },
-  "dependencies": {
-    "tweetnacl": "^1.0.3"
   }
 }

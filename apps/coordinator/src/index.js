@@ -1,5 +1,5 @@
 import Fastify from 'fastify';
-import nacl from 'tweetnacl';
+import crypto from 'node:crypto';
 import { recoverMessageAddress } from 'viem';
 
 const app = Fastify({ logger: true });
@@ -9,20 +9,12 @@ const CHAIN_ID = 56;
 const EPOCH_SECONDS = 86400;
 const HALVING_EPOCHS = 180;
 const CAP = 21_000_000;
-const R0 = CAP / (2 * HALVING_EPOCHS); // 58,333.333333...
-
-// UTC-anchored epoch 0 start
+const R0 = CAP / (2 * HALVING_EPOCHS);
 const GENESIS_UTC = process.env.GENESIS_UTC || '2026-02-24';
-
-// Lease TTL (seconds)
 const LEASE_TTL_SECONDS = Number(process.env.LEASE_TTL_SECONDS || 86400);
 
-// --- in-memory stores (MVP) ---
 const registrations = new Map();
-// miner(lowercase) -> { agentPubKeyB64, serverNonce, registeredAtMs }
-
 const leases = new Map();
-// leaseToken -> { miner, expMs }
 
 function nowMs() { return Date.now(); }
 function randToken() { return crypto.randomUUID(); }
@@ -96,22 +88,17 @@ function normalizeMiner(miner) {
   return m;
 }
 
-function b64ToU8(b64) {
-  return new Uint8Array(Buffer.from(b64, 'base64'));
-}
-
-function u8ToB64(u8) {
-  return Buffer.from(u8).toString('base64');
-}
-
 function buildProveMessage({ miner, serverNonce }) {
-  // This message is what the EVM wallet signs (human can sign too, but they still need agentSig)
   return `ClawMiner Agent Lease Proof\n\nminer: ${miner}\nchainId: ${CHAIN_ID}\nnonce: ${serverNonce}`;
+}
+
+function importEd25519SpkiDerB64(b64) {
+  const der = Buffer.from(b64, 'base64');
+  return crypto.createPublicKey({ key: der, format: 'der', type: 'spki' });
 }
 
 app.get('/healthz', async () => ({ ok: true }));
 
-// --- Public endpoints for dashboard ---
 app.get('/v1/epoch', async () => {
   const e = getEpochInfo();
   return {
@@ -132,32 +119,24 @@ app.get('/v1/stats', async () => {
   };
 });
 
-// --- Agent-only auth ---
-// register: client provides miner + agentPubKey (ed25519 pubkey base64)
+// Register: agentPubKey is base64(SPKI DER) ed25519 public key
 app.post('/v1/agent/register', async (req, reply) => {
   const miner = normalizeMiner(req.body?.miner);
-  const agentPubKeyB64 = req.body?.agentPubKey;
+  const agentPubKey = req.body?.agentPubKey;
 
-  if (!miner || typeof agentPubKeyB64 !== 'string') {
+  if (!miner || typeof agentPubKey !== 'string') {
     return reply.code(400).send({ error: 'missing_or_invalid_fields' });
   }
 
-  let pub;
+  // Validate key parses
   try {
-    pub = b64ToU8(agentPubKeyB64);
+    importEd25519SpkiDerB64(agentPubKey);
   } catch {
-    return reply.code(400).send({ error: 'invalid_agentPubKey_b64' });
-  }
-  if (pub.length !== nacl.sign.publicKeyLength) {
-    return reply.code(400).send({ error: 'invalid_agentPubKey_length' });
+    return reply.code(400).send({ error: 'invalid_agentPubKey' });
   }
 
   const serverNonce = randToken();
-  registrations.set(miner, {
-    agentPubKeyB64,
-    serverNonce,
-    registeredAtMs: nowMs(),
-  });
+  registrations.set(miner, { agentPubKeyB64: agentPubKey, serverNonce, registeredAtMs: nowMs() });
 
   return {
     miner,
@@ -167,7 +146,8 @@ app.post('/v1/agent/register', async (req, reply) => {
   };
 });
 
-// prove: requires walletSig (EVM) + agentSig (ed25519) to obtain leaseToken
+// Prove: walletSig proves miner address control; agentSig proves possession of ed25519 agent key
+// agentSig is base64(signature) over UTF-8 bytes of serverNonce
 app.post('/v1/agent/prove', async (req, reply) => {
   const miner = normalizeMiner(req.body?.miner);
   const walletSig = req.body?.walletSig;
@@ -180,50 +160,28 @@ app.post('/v1/agent/prove', async (req, reply) => {
   const reg = registrations.get(miner);
   if (!reg) return reply.code(404).send({ error: 'not_registered' });
 
-  const { agentPubKeyB64, serverNonce } = reg;
+  const pub = importEd25519SpkiDerB64(reg.agentPubKeyB64);
+  const sig = Buffer.from(agentSigB64, 'base64');
+  const msg = Buffer.from(reg.serverNonce, 'utf8');
 
-  // 1) verify agentSig over raw nonce bytes (strongly ties to running client)
-  let agentSig, agentPub;
-  try {
-    agentSig = b64ToU8(agentSigB64);
-    agentPub = b64ToU8(agentPubKeyB64);
-  } catch {
-    return reply.code(400).send({ error: 'invalid_base64' });
-  }
-
-  if (agentSig.length !== nacl.sign.signatureLength) {
-    return reply.code(400).send({ error: 'invalid_agentSig_length' });
-  }
-
-  const okAgent = nacl.sign.detached.verify(
-    new TextEncoder().encode(serverNonce),
-    agentSig,
-    agentPub
-  );
+  const okAgent = crypto.verify(null, msg, pub, sig);
   if (!okAgent) return reply.code(403).send({ error: 'agentSig_verify_failed' });
 
-  // 2) verify wallet controls miner (recover address from message)
-  const msg = buildProveMessage({ miner, serverNonce });
+  const proveMsg = buildProveMessage({ miner, serverNonce: reg.serverNonce });
   let recovered;
   try {
-    recovered = await recoverMessageAddress({ message: msg, signature: walletSig });
-  } catch (e) {
+    recovered = await recoverMessageAddress({ message: proveMsg, signature: walletSig });
+  } catch {
     return reply.code(400).send({ error: 'walletSig_recover_failed' });
   }
-
   if (normalizeMiner(recovered) !== miner) {
     return reply.code(403).send({ error: 'walletSig_not_miner' });
   }
 
-  // issue lease
   const leaseToken = randToken();
   leases.set(leaseToken, { miner, expMs: nowMs() + LEASE_TTL_SECONDS * 1000 });
 
-  return {
-    leaseToken,
-    expiresInSeconds: LEASE_TTL_SECONDS,
-    miner,
-  };
+  return { leaseToken, expiresInSeconds: LEASE_TTL_SECONDS, miner };
 });
 
 app.post('/v1/agent/renew', async (req, reply) => {
@@ -235,8 +193,7 @@ app.post('/v1/agent/renew', async (req, reply) => {
   return { ok: true, expiresInSeconds: LEASE_TTL_SECONDS };
 });
 
-// --- Mining endpoints (still stubs) ---
-app.get('/v1/challenge', { preHandler: requireLease }, async (req) => {
+app.get('/v1/challenge', { preHandler: requireLease }, async () => {
   const e = getEpochInfo();
   return {
     epochId: e.epochId,

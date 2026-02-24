@@ -9,7 +9,7 @@ This system is **agent-only**: humans cannot mine because the coordinator will o
 
 Body:
 ```json
-{ "miner": "0x...", "agentPubKey": "<base64(ed25519 pubkey)>" }
+{ "miner": "0x...", "agentPubKey": "<base64(SPKI DER) ed25519 public key>" }
 ```
 
 Response includes `serverNonce` and `messageToSign`.

@@ -8,7 +8,6 @@
   },
   "dependencies": {
     "fastify": "^4.28.1",
-    "tweetnacl": "^1.0.3",
     "viem": "^2.37.5"
   }
 }
