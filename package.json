@@ -1,0 +1,9 @@
+{
+  "name": "clawminer",
+  "private": true,
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "dev:dashboard": "pnpm -C apps/dashboard dev",
+    "dev:coordinator": "pnpm -C apps/coordinator dev"
+  }
+}
