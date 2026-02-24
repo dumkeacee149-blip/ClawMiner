@@ -1,4 +1,7 @@
+'use client';
+
 import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
 
 function fmtAddr(addr?: string | null) {
   if (!addr) return '—';
@@ -59,32 +62,55 @@ async function getJson(url: string) {
   return res.json();
 }
 
-export default async function Page() {
+export default function Page() {
   const chainId = process.env.NEXT_PUBLIC_CHAIN_ID ?? '56';
   const rpc = process.env.NEXT_PUBLIC_RPC_URL ?? 'https://bsc-dataseed.binance.org';
   const coordinator = process.env.NEXT_PUBLIC_COORDINATOR_URL ?? '';
   const token = process.env.NEXT_PUBLIC_TOKEN_ADDRESS ?? '';
   const mining = process.env.NEXT_PUBLIC_MINING_ADDRESS ?? '';
 
-  // Always compute baseline KPI locally (works on Vercel without coordinator).
-  const local = localEpochModel({
-    genesisUtc: '2026-02-24',
-    cap: 21_000_000,
-    halvingEpochs: 180,
-    epochSeconds: 86400,
-  });
+  const [tick, setTick] = useState(0);
+  const [stats, setStats] = useState<any>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
-  // Optional: enrich with coordinator stats when you run locally.
-  let stats: any = null;
-  let loadErr: string | null = null;
+  const local = useMemo(() => {
+    return localEpochModel({
+      genesisUtc: '2026-02-24',
+      cap: 21_000_000,
+      halvingEpochs: 180,
+      epochSeconds: 86400,
+      nowMs: Date.now(),
+    });
+  }, [tick]);
 
-  if (coordinator && !/example\.com/.test(coordinator)) {
-    try {
-      stats = await getJson(`${coordinator.replace(/\/$/, '')}/v1/stats`);
-    } catch (e: any) {
-      loadErr = e?.message || 'failed to load coordinator';
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    let stopped = false;
+
+    async function poll() {
+      if (!coordinator || /example\.com/.test(coordinator)) return;
+      try {
+        const s = await getJson(`${coordinator.replace(/\/$/, '')}/v1/stats`);
+        if (!stopped) {
+          setStats(s);
+          setLoadErr(null);
+        }
+      } catch (e: any) {
+        if (!stopped) setLoadErr(e?.message || 'failed to load coordinator');
+      }
     }
-  }
+
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => {
+      stopped = true;
+      clearInterval(id);
+    };
+  }, [coordinator]);
 
   const epochMintDisplay = local.epochMint.toLocaleString(undefined, { maximumFractionDigits: 6 });
 
@@ -171,6 +197,7 @@ export default async function Page() {
           <div className="footer">
             <Link className="pillLink" href="/wirepaper">wirepaper</Link>
             <Link className="pillLink" href="/miner">miner skill</Link>
+            <Link className="pillLink" href="/sign">sign</Link>
             <a className="pillLink" href="https://agentmoney.net/" target="_blank" rel="noreferrer">reference</a>
           </div>
 
