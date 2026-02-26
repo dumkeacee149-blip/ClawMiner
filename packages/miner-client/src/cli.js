@@ -74,6 +74,7 @@ async function cmdRegister(){
   saveState({
     miner,
     serverNonce: out.serverNonce,
+    registerToken: out.registerToken,
     messageToSign: out.messageToSign,
     createdAt: new Date().toISOString(),
   });
@@ -93,7 +94,7 @@ async function cmdProve(){
   if(!walletSig) throw new Error('missing --walletSig');
 
   const st = loadState();
-  if(!st || !st.serverNonce || !st.messageToSign){
+  if(!st || !st.serverNonce || !st.messageToSign || !st.registerToken){
     throw new Error(`missing state at ${STATE_PATH}. Run: clawminer register --miner ${miner}`);
   }
   if((st.miner || '').toLowerCase() !== miner.toLowerCase()){
@@ -105,7 +106,12 @@ async function cmdProve(){
   const sig = crypto.sign(null, msg, kp.privateKey);
   const agentSigB64 = Buffer.from(sig).toString('base64');
 
-  const out = await jpost(`${COORD}/v1/agent/prove`, { miner, walletSig, agentSig: agentSigB64 });
+  const out = await jpost(`${COORD}/v1/agent/prove`, {
+    miner,
+    walletSig,
+    agentSig: agentSigB64,
+    registerToken: st.registerToken,
+  });
   console.log('\n[PROVE] ok');
   console.log('leaseToken:', out.leaseToken);
   console.log('expiresInSeconds:', out.expiresInSeconds);

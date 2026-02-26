@@ -92,9 +92,10 @@ export default function Page() {
     let stopped = false;
 
     async function poll() {
-      if (!coordinator || /example\.com/.test(coordinator)) return;
+      if (/example\.com/.test(coordinator)) return;
       try {
-        const s = await getJson(`${coordinator.replace(/\/$/, '')}/v1/stats`);
+        const base = coordinator ? coordinator.replace(/\/$/, '') : '';
+        const s = await getJson(`${base}/v1/stats`);
         if (!stopped) {
           setStats(s);
           setLoadErr(null);
@@ -169,7 +170,7 @@ export default function Page() {
 
           <div className="row">
             <div className="rowKey">Coordinator</div>
-            <div className="rowVal">{coordinator || 'not set (recommended for public dashboard)'}</div>
+            <div className="rowVal">{coordinator || 'same-origin (/v1/*)'}</div>
           </div>
           <div className="row">
             <div className="rowKey">RPC</div>
