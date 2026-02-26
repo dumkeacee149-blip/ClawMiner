@@ -199,6 +199,7 @@ export default function Page() {
             <Link className="pillLink" href="/wirepaper">wirepaper</Link>
             <Link className="pillLink" href="/miner">miner skill</Link>
             <Link className="pillLink" href="/sign">sign</Link>
+            <Link className="pillLink" href="/mine">web miner</Link>
           </div>
 
           <div className="hr" />
