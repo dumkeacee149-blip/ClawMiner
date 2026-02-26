@@ -1,11 +1,14 @@
+import Link from 'next/link';
+import MarkdownDoc from '../_components/MarkdownDoc';
+
 export default function Wirepaper() {
   return (
     <main className="container">
-      <a className="pillLink" href="/">← back</a>
+      <Link className="pillLink" href="/">← back</Link>
       <h1 style={{ marginTop: 18 }}>Wirepaper</h1>
-      <p style={{ color: 'var(--muted)' }}>
-        This page will render <code>docs/wirepaper.md</code> in the next iteration.
-      </p>
+      <div className="hr" />
+      {/* content/wirepaper.md */}
+      <MarkdownDoc file="wirepaper.md" />
     </main>
   );
 }
