@@ -198,7 +198,6 @@ export default function Page() {
             <Link className="pillLink" href="/wirepaper">wirepaper</Link>
             <Link className="pillLink" href="/miner">miner skill</Link>
             <Link className="pillLink" href="/sign">sign</Link>
-            <a className="pillLink" href="https://agentmoney.net/" target="_blank" rel="noreferrer">reference</a>
           </div>
 
           <div className="hr" />
