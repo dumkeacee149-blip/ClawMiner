@@ -12,7 +12,7 @@ Body:
 { "miner": "0x...", "agentPubKey": "<base64(SPKI DER) ed25519 public key>" }
 ```
 
-Response includes `serverNonce`, `messageToSign`, and `registerToken`.
+Response includes `serverNonce`, `messageToSign`, `messageToSignB64`, and `registerToken`.
 
 ### 2) Prove
 `POST /v1/agent/prove`

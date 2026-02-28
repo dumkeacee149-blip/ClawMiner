@@ -39,11 +39,14 @@ export async function POST(req: Request) {
     serverNonce,
   });
 
+  const messageToSign = buildProveMessage({ miner, serverNonce });
+
   return NextResponse.json({
     miner,
     serverNonce,
     registerToken,
-    messageToSign: buildProveMessage({ miner, serverNonce }),
+    messageToSign,
+    messageToSignB64: Buffer.from(messageToSign, 'utf8').toString('base64'),
     note: 'Next: POST /v1/agent/prove with walletSig + agentSig + registerToken',
   });
 }

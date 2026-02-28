@@ -203,10 +203,13 @@ app.post('/v1/agent/register', async (req, reply) => {
   registrations.set(miner, { agentPubKeyB64: agentPubKey, serverNonce, registeredAtMs: nowMs() });
   persist();
 
+  const messageToSign = buildProveMessage({ miner, serverNonce });
+
   return {
     miner,
     serverNonce,
-    messageToSign: buildProveMessage({ miner, serverNonce }),
+    messageToSign,
+    messageToSignB64: Buffer.from(messageToSign, 'utf8').toString('base64'),
     note: 'Next: POST /v1/agent/prove with walletSig + agentSig over serverNonce',
   };
 });
